@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/globalsign/mgo/bson"
+	"github.com/google/uuid"
 
 	eh "github.com/looplab/eventhorizon"
 	stan "github.com/nats-io/stan.go"
@@ -75,7 +76,7 @@ type Event struct {
 	EventType     eh.EventType
 	Timestamp     time.Time
 	AggregateType eh.AggregateType
-	AggregateID   eh.UUID
+	AggregateID   uuid.UUID
 	Version       int
 	Context       map[string]interface{}
 	RawData       *bson.Raw `bson:",omitempty"`
