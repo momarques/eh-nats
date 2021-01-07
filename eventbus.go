@@ -83,7 +83,7 @@ type Event struct {
 }
 
 func (b *EventBus) PublishEvent(ctx context.Context, event eh.Event) error {
-	wireEvent := &Event{
+	currentEvent := &Event{
 		EventType:     event.EventType(),
 		AggregateType: event.AggregateType(),
 		AggregateID:   event.AggregateID(),
@@ -97,10 +97,10 @@ func (b *EventBus) PublishEvent(ctx context.Context, event eh.Event) error {
 		if err != nil {
 			return ErrCouldNotMarshalEvent(err)
 		}
-		wireEvent.RawData = &bson.Raw{Kind: bson.ElementDocument, Data: bytesData}
+		currentEvent.RawData = &bson.Raw{Kind: bson.ElementDocument, Data: bytesData}
 	}
 
-	marshaledEvent, err := bson.Marshal(wireEvent)
+	marshaledEvent, err := bson.Marshal(currentEvent)
 	if err != nil {
 		return ErrCouldNotMarshalEvent(err)
 	}
@@ -116,16 +116,16 @@ func (b *EventBus) PublishEvent(ctx context.Context, event eh.Event) error {
 }
 
 // AddHandler implements the AddHandler method of the eventhorizon.EventBus interface.
-func (b *EventBus) AddHandler(ctx context.Context, m eh.EventMatcher, h eh.EventHandler) {
-	_, err := b.subscription(ctx, m, h, false)
+func (b *EventBus) AddHandler(m eh.EventMatcher, h eh.EventHandler) {
+	_, err := b.subscription(m, h, false)
 	if err != nil {
 		b.errCh <- Error{Err: err}
 	}
 }
 
 // AddObserver implements the AddObserver method of the eventhorizon.EventBus interface.
-func (b *EventBus) AddObserver(ctx context.Context, m eh.EventMatcher, h eh.EventHandler) {
-	_, err := b.subscription(ctx, m, h, true)
+func (b *EventBus) AddObserver(m eh.EventMatcher, h eh.EventHandler) {
+	_, err := b.subscription(m, h, true)
 	if err != nil {
 		b.errCh <- Error{Err: err}
 	}
@@ -136,7 +136,7 @@ func (b *EventBus) Errors() <-chan Error {
 	return b.errCh
 }
 
-func (b *EventBus) newMessageHandler(receivedCtx context.Context, matcher eh.EventMatcher, handler eh.EventHandler) stan.MsgHandler {
+func (b *EventBus) newMessageHandler(matcher eh.EventMatcher, handler eh.EventHandler) stan.MsgHandler {
 	return func(m *stan.Msg) {
 		var e Event
 		if err := bson.Unmarshal(m.Data, &e); err != nil {
@@ -167,13 +167,14 @@ func (b *EventBus) newMessageHandler(receivedCtx context.Context, matcher eh.Eve
 		}
 
 		ehEvent := eh.NewEventForAggregate(e.EventType, data, e.Timestamp, e.AggregateType, e.AggregateID, e.Version)
-		matcher := eh.MatchEvents{}
+
 		if !matcher.Match(ehEvent) {
 			m.Ack()
 			return
 		}
 
-		ctx := eh.UnmarshalContext(receivedCtx, e.Context)
+		emptyCtx := context.Background()
+		ctx := eh.UnmarshalContext(emptyCtx, e.Context)
 		// Notify all observers about the event.
 		if err := handler.HandleEvent(ctx, ehEvent); err != nil {
 			select {
@@ -188,7 +189,7 @@ func (b *EventBus) newMessageHandler(receivedCtx context.Context, matcher eh.Eve
 }
 
 // Checks the matcher and handler and gets the event subscription.
-func (b *EventBus) subscription(ctx context.Context, m eh.EventMatcher, h eh.EventHandler, observer bool) (stan.Subscription, error) {
+func (b *EventBus) subscription(m eh.EventMatcher, h eh.EventHandler, observer bool) (stan.Subscription, error) {
 	b.registeredMu.Lock()
 	defer b.registeredMu.Unlock()
 
@@ -205,7 +206,7 @@ func (b *EventBus) subscription(ctx context.Context, m eh.EventMatcher, h eh.Eve
 
 	handlerType := string(h.HandlerType())
 
-	handler := b.newMessageHandler(ctx, m, h)
+	handler := b.newMessageHandler(m, h)
 	subject := b.subjectPrefix
 
 	var sub stan.Subscription
